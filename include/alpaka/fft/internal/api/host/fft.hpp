@@ -130,14 +130,47 @@ namespace alpaka::fft::internal
             else
                 validate(m_transform != Transform::c2c, "Real plan value type only supports R2C/C2R.");
 
-            if(!areZero(m_layout.inStrides))
+            validateStrides(
+                m_layout.inStrides,
+                inputElementBytes<T_Value>(m_transform),
+                expectedInputExtents(m_layout, m_transform, m_options.placement),
+                "input");
+            validateStrides(
+                m_layout.outStrides,
+                outputElementBytes<T_Value>(m_transform),
+                expectedOutputExtents(m_layout, m_transform, m_options.placement),
+                "output");
+        }
+
+        /** Validate user-provided byte-strides for the FFTW backend.
+         *
+         * FFTW's `plan_many` interface describes a transform inside a row-major pitched array: the innermost
+         * dimension has a single element stride (it may be interleaved) and every outer stride is an integer
+         * multiple of the next inner stride. This matches alpaka's pitch convention, where only the row pitch may
+         * include padding.
+         */
+        static void validateStrides(
+            alpaka::Vec<std::size_t, T_dim> const& byteStrides,
+            std::size_t elementBytes,
+            alpaka::concepts::Vector auto const& logicalExtents,
+            char const* what)
+        {
+            if(areZero(byteStrides))
+                return;
+            for(uint32_t i = 0u; i < T_dim; ++i)
+            {
+                validate(byteStrides[i] != 0u, std::string{"FFT "} + what + " stride must be non-zero.");
                 validate(
-                    m_layout.inStrides == expectedInStrides<T_Value>(m_layout, m_transform, m_options.placement),
-                    "Only contiguous input layout is supported.");
-            if(!areZero(m_layout.outStrides))
+                    byteStrides[i] % elementBytes == 0u,
+                    std::string{"FFT "} + what + " stride must be a multiple of the element size.");
+            }
+            auto const elemStrides = stridesToElements<index_type>(byteStrides, elementBytes);
+            // Throws unless the strides describe a row-major pitched layout.
+            auto const embeds = embedsFromStrides<index_type>(elemStrides, logicalExtents);
+            for(uint32_t i = 1u; i < T_dim; ++i)
                 validate(
-                    m_layout.outStrides == expectedOutStrides<T_Value>(m_layout, m_transform, m_options.placement),
-                    "Only contiguous output layout is supported.");
+                    embeds[i] >= static_cast<index_type>(logicalExtents[i]),
+                    std::string{"FFT "} + what + " stride is too small for its extent.");
         }
 
         [[nodiscard]] auto n() const
@@ -150,20 +183,73 @@ namespace alpaka::fft::internal
 
         [[nodiscard]] auto inEmbed() const
         {
-            auto ext = expectedInputExtents(m_layout, m_transform, m_options.placement);
+            auto const ext = expectedInputExtents(m_layout, m_transform, m_options.placement);
+            auto const embeds = embedsFromStrides<index_type>(
+                stridesToElements<index_type>(
+                    resolvedInStrides<T_Value>(m_layout, m_transform, m_options.placement),
+                    inputElementBytes<T_Value>(m_transform)),
+                ext);
             std::array<int, T_dim> vals{};
             for(uint32_t i = 0u; i < T_dim; ++i)
-                vals[i] = static_cast<int>(ext[i]);
+                vals[i] = static_cast<int>(embeds[i]);
             return vals;
         }
 
         [[nodiscard]] auto outEmbed() const
         {
-            auto ext = expectedOutputExtents(m_layout, m_transform, m_options.placement);
+            auto const ext = expectedOutputExtents(m_layout, m_transform, m_options.placement);
+            auto const embeds = embedsFromStrides<index_type>(
+                stridesToElements<index_type>(
+                    resolvedOutStrides<T_Value>(m_layout, m_transform, m_options.placement),
+                    outputElementBytes<T_Value>(m_transform)),
+                ext);
             std::array<int, T_dim> vals{};
             for(uint32_t i = 0u; i < T_dim; ++i)
-                vals[i] = static_cast<int>(ext[i]);
+                vals[i] = static_cast<int>(embeds[i]);
             return vals;
+        }
+
+        /** Element stride of the innermost dimension, as required by FFTW's `plan_many` interface. */
+        [[nodiscard]] auto inStride() const
+        {
+            auto const strides = stridesToElements<int>(
+                resolvedInStrides<T_Value>(m_layout, m_transform, m_options.placement),
+                inputElementBytes<T_Value>(m_transform));
+            return strides[T_dim - 1u];
+        }
+
+        [[nodiscard]] auto outStride() const
+        {
+            auto const strides = stridesToElements<int>(
+                resolvedOutStrides<T_Value>(m_layout, m_transform, m_options.placement),
+                outputElementBytes<T_Value>(m_transform));
+            return strides[T_dim - 1u];
+        }
+
+        /** Element distance between consecutive batches.
+         *
+         * Without an explicit distance the physical span of the pitched layout is used. For a contiguous layout
+         * this is identical to `product(extents) * elementSize`; for a pitched layout it is `extent[0] * stride[0]`,
+         * which accounts for the row padding.
+         */
+        [[nodiscard]] auto inDistance() const
+        {
+            auto const ext = expectedInputExtents(m_layout, m_transform, m_options.placement);
+            auto const stride0 = resolvedInStrides<T_Value>(m_layout, m_transform, m_options.placement)[0u];
+            auto const bytes = m_layout.inDistance != 0u
+                                   ? m_layout.inDistance
+                                   : static_cast<std::size_t>(ext[0u]) * static_cast<std::size_t>(stride0);
+            return distanceToElements<int>(bytes, inputElementBytes<T_Value>(m_transform));
+        }
+
+        [[nodiscard]] auto outDistance() const
+        {
+            auto const ext = expectedOutputExtents(m_layout, m_transform, m_options.placement);
+            auto const stride0 = resolvedOutStrides<T_Value>(m_layout, m_transform, m_options.placement)[0u];
+            auto const bytes = m_layout.outDistance != 0u
+                                   ? m_layout.outDistance
+                                   : static_cast<std::size_t>(ext[0u]) * static_cast<std::size_t>(stride0);
+            return distanceToElements<int>(bytes, outputElementBytes<T_Value>(m_transform));
         }
 
         [[nodiscard]] static unsigned planningFlags()
@@ -176,12 +262,10 @@ namespace alpaka::fft::internal
             auto nVals = n();
             auto inEmbedVals = inEmbed();
             auto outEmbedVals = outEmbed();
-            auto inDistance = distanceToElements<int>(
-                expectedInDistance<T_Value>(m_layout, m_transform, m_options.placement),
-                inputElementBytes<T_Value>(m_transform));
-            auto outDistance = distanceToElements<int>(
-                expectedOutDistance<T_Value>(m_layout, m_transform, m_options.placement),
-                outputElementBytes<T_Value>(m_transform));
+            int const inStrideValue = inStride();
+            int const outStrideValue = outStride();
+            auto const inDistanceValue = inDistance();
+            auto const outDistanceValue = outDistance();
             int batch = static_cast<int>(m_layout.batch);
 
             if constexpr(ComplexScalar<T_Value>)
@@ -197,12 +281,12 @@ namespace alpaka::fft::internal
                         batch,
                         inPtr,
                         inEmbedVals.data(),
-                        1,
-                        inDistance,
+                        inStrideValue,
+                        inDistanceValue,
                         outPtr,
                         outEmbedVals.data(),
-                        1,
-                        outDistance,
+                        outStrideValue,
+                        outDistanceValue,
                         FFTW_FORWARD,
                         planningFlags());
                     m_state->m_inversePlan = fftwf_plan_many_dft(
@@ -211,12 +295,12 @@ namespace alpaka::fft::internal
                         batch,
                         inPtr,
                         inEmbedVals.data(),
-                        1,
-                        inDistance,
+                        inStrideValue,
+                        inDistanceValue,
                         outPtr,
                         outEmbedVals.data(),
-                        1,
-                        outDistance,
+                        outStrideValue,
+                        outDistanceValue,
                         FFTW_BACKWARD,
                         planningFlags());
                 }
@@ -228,12 +312,12 @@ namespace alpaka::fft::internal
                         batch,
                         inPtr,
                         inEmbedVals.data(),
-                        1,
-                        inDistance,
+                        inStrideValue,
+                        inDistanceValue,
                         outPtr,
                         outEmbedVals.data(),
-                        1,
-                        outDistance,
+                        outStrideValue,
+                        outDistanceValue,
                         FFTW_FORWARD,
                         planningFlags());
                     m_state->m_inversePlan = fftw_plan_many_dft(
@@ -242,12 +326,12 @@ namespace alpaka::fft::internal
                         batch,
                         inPtr,
                         inEmbedVals.data(),
-                        1,
-                        inDistance,
+                        inStrideValue,
+                        inDistanceValue,
                         outPtr,
                         outEmbedVals.data(),
-                        1,
-                        outDistance,
+                        outStrideValue,
+                        outDistanceValue,
                         FFTW_BACKWARD,
                         planningFlags());
                 }
@@ -266,12 +350,12 @@ namespace alpaka::fft::internal
                         batch,
                         inPtr,
                         inEmbedVals.data(),
-                        1,
-                        inDistance,
+                        inStrideValue,
+                        inDistanceValue,
                         outPtr,
                         outEmbedVals.data(),
-                        1,
-                        outDistance,
+                        outStrideValue,
+                        outDistanceValue,
                         planningFlags());
                 else
                     m_state->m_forwardPlan = fftw_plan_many_dft_r2c(
@@ -280,12 +364,12 @@ namespace alpaka::fft::internal
                         batch,
                         inPtr,
                         inEmbedVals.data(),
-                        1,
-                        inDistance,
+                        inStrideValue,
+                        inDistanceValue,
                         outPtr,
                         outEmbedVals.data(),
-                        1,
-                        outDistance,
+                        outStrideValue,
+                        outDistanceValue,
                         planningFlags());
                 validate(m_state->m_forwardPlan != nullptr, "FFTW plan creation failed.");
             }
@@ -301,12 +385,12 @@ namespace alpaka::fft::internal
                         batch,
                         inPtr,
                         inEmbedVals.data(),
-                        1,
-                        inDistance,
+                        inStrideValue,
+                        inDistanceValue,
                         outPtr,
                         outEmbedVals.data(),
-                        1,
-                        outDistance,
+                        outStrideValue,
+                        outDistanceValue,
                         planningFlags());
                 else
                     m_state->m_forwardPlan = fftw_plan_many_dft_c2r(
@@ -315,12 +399,12 @@ namespace alpaka::fft::internal
                         batch,
                         inPtr,
                         inEmbedVals.data(),
-                        1,
-                        inDistance,
+                        inStrideValue,
+                        inDistanceValue,
                         outPtr,
                         outEmbedVals.data(),
-                        1,
-                        outDistance,
+                        outStrideValue,
+                        outDistanceValue,
                         planningFlags());
                 validate(m_state->m_forwardPlan != nullptr, "FFTW plan creation failed.");
             }

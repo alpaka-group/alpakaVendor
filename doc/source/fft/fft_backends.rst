@@ -87,7 +87,11 @@ Backends validate configuration at plan creation time:
 - Extents must be non-zero
 - Complex value type only supports C2C
 - Real value type only supports R2C/C2R
-- Only contiguous layouts are supported in v1
+- Custom strides must describe a row-major pitched layout: the innermost dimension has a uniform element stride
+  (it may be interleaved) and each outer byte stride is a multiple of the next inner byte stride. Each physical
+  pitch must also be at least as large as the corresponding extent. This includes padded alpaka views whose row
+  pitch is larger than ``extent * sizeof(value_type)``. The host FFTW backend implements this with
+  ``fftw_plan_many`` and the per-dimension strides from ``getPitches()``.
 
 Error handling
 ++++++++++++++
