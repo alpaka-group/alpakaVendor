@@ -209,7 +209,7 @@ namespace alpaka::fft::internal
         [[nodiscard]] auto forwardDomainStrides() const
         {
             if constexpr(ComplexScalar<T_Value>)
-                return expectedInStrides<T_Value>(m_layout, m_transform, m_options.placement);
+                return resolvedInStrides<T_Value>(m_layout, m_transform, m_options.placement);
             else if(m_transform == Transform::r2c)
                 return resolvedInStrides<T_Value>(m_layout, m_transform, m_options.placement);
             else
@@ -219,7 +219,7 @@ namespace alpaka::fft::internal
         [[nodiscard]] auto backwardDomainStrides() const
         {
             if constexpr(ComplexScalar<T_Value>)
-                return expectedOutStrides<T_Value>(m_layout, m_transform, m_options.placement);
+                return resolvedOutStrides<T_Value>(m_layout, m_transform, m_options.placement);
             else if(m_transform == Transform::r2c)
                 return resolvedOutStrides<T_Value>(m_layout, m_transform, m_options.placement);
             else

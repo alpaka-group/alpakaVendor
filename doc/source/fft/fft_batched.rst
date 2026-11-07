@@ -25,7 +25,8 @@ The distance specifies the number of **bytes** between consecutive batch element
 - **inDistanceBytes**: Bytes between input batch i and batch i+1
 - **outDistanceBytes**: Bytes between output batch i and batch i+1
 
-If distance is 0, it defaults to ``product(extents) * sizeof(value_type)`` (contiguous batches in bytes).
+If distance is 0, it defaults to the physical span of the declared layout: ``extent[0] * stride[0]`` for custom
+strides, or ``product(extents) * sizeof(value_type)`` for a contiguous layout.
 
 When a backend library requires element counts, the conversion (dividing by ``sizeof(value_type)``) is performed automatically.
 

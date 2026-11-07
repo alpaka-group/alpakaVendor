@@ -103,8 +103,9 @@ namespace alpaka::fft::internal
 
     /** Return the expected input byte-distance between consecutive batches.
      *
-     * When the user has not set a distance (value is 0), the default is the product of the input extents
-     * multiplied by the element size, giving a contiguous batch layout in bytes.
+     * When the user has not set a distance (value is 0), the default is the physical span of the declared layout:
+     * `extent[0] * stride[0]` for custom strides, or the contiguous product of the input extents and the element
+     * size otherwise.
      */
     template<typename T_Value, alpaka::concepts::Vector T_Extents>
     [[nodiscard]] constexpr auto expectedInDistance(
@@ -115,14 +116,17 @@ namespace alpaka::fft::internal
         using byte_type = typename Layout<T_Extents>::byte_type;
         if(layout.inDistance != static_cast<byte_type>(0u))
             return layout.inDistance;
-        return static_cast<byte_type>(
-            expectedInputExtents(layout, transform, placement).product() * inputElementBytes<T_Value>(transform));
+        auto const ext = expectedInputExtents(layout, transform, placement);
+        if(!areZero(layout.inStrides))
+            return static_cast<byte_type>(ext[0u]) * static_cast<byte_type>(layout.inStrides[0u]);
+        return static_cast<byte_type>(ext.product() * inputElementBytes<T_Value>(transform));
     }
 
     /** Return the expected output byte-distance between consecutive batches.
      *
-     * When the user has not set a distance (value is 0), the default is the product of the output extents
-     * multiplied by the element size, giving a contiguous batch layout in bytes.
+     * When the user has not set a distance (value is 0), the default is the physical span of the declared layout:
+     * `extent[0] * stride[0]` for custom strides, or the contiguous product of the output extents and the element
+     * size otherwise.
      */
     template<typename T_Value, alpaka::concepts::Vector T_Extents>
     [[nodiscard]] constexpr auto expectedOutDistance(
@@ -133,8 +137,10 @@ namespace alpaka::fft::internal
         using byte_type = typename Layout<T_Extents>::byte_type;
         if(layout.outDistance != static_cast<byte_type>(0u))
             return layout.outDistance;
-        return static_cast<byte_type>(
-            expectedOutputExtents(layout, transform, placement).product() * outputElementBytes<T_Value>(transform));
+        auto const ext = expectedOutputExtents(layout, transform, placement);
+        if(!areZero(layout.outStrides))
+            return static_cast<byte_type>(ext[0u]) * static_cast<byte_type>(layout.outStrides[0u]);
+        return static_cast<byte_type>(ext.product() * outputElementBytes<T_Value>(transform));
     }
 
     /** Return the expected input byte-strides per dimension.

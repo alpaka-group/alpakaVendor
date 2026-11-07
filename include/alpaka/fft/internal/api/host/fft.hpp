@@ -226,32 +226,6 @@ namespace alpaka::fft::internal
             return strides[T_dim - 1u];
         }
 
-        /** Element distance between consecutive batches.
-         *
-         * Without an explicit distance the physical span of the pitched layout is used. For a contiguous layout
-         * this is identical to `product(extents) * elementSize`; for a pitched layout it is `extent[0] * stride[0]`,
-         * which accounts for the row padding.
-         */
-        [[nodiscard]] auto inDistance() const
-        {
-            auto const ext = expectedInputExtents(m_layout, m_transform, m_options.placement);
-            auto const stride0 = resolvedInStrides<T_Value>(m_layout, m_transform, m_options.placement)[0u];
-            auto const bytes = m_layout.inDistance != 0u
-                                   ? m_layout.inDistance
-                                   : static_cast<std::size_t>(ext[0u]) * static_cast<std::size_t>(stride0);
-            return distanceToElements<int>(bytes, inputElementBytes<T_Value>(m_transform));
-        }
-
-        [[nodiscard]] auto outDistance() const
-        {
-            auto const ext = expectedOutputExtents(m_layout, m_transform, m_options.placement);
-            auto const stride0 = resolvedOutStrides<T_Value>(m_layout, m_transform, m_options.placement)[0u];
-            auto const bytes = m_layout.outDistance != 0u
-                                   ? m_layout.outDistance
-                                   : static_cast<std::size_t>(ext[0u]) * static_cast<std::size_t>(stride0);
-            return distanceToElements<int>(bytes, outputElementBytes<T_Value>(m_transform));
-        }
-
         [[nodiscard]] static unsigned planningFlags()
         {
             return traits::flags | FFTW_UNALIGNED;
@@ -264,8 +238,12 @@ namespace alpaka::fft::internal
             auto outEmbedVals = outEmbed();
             int const inStrideValue = inStride();
             int const outStrideValue = outStride();
-            auto const inDistanceValue = inDistance();
-            auto const outDistanceValue = outDistance();
+            auto const inDistanceValue = distanceToElements<int>(
+                expectedInDistance<T_Value>(m_layout, m_transform, m_options.placement),
+                inputElementBytes<T_Value>(m_transform));
+            auto const outDistanceValue = distanceToElements<int>(
+                expectedOutDistance<T_Value>(m_layout, m_transform, m_options.placement),
+                outputElementBytes<T_Value>(m_transform));
             int batch = static_cast<int>(m_layout.batch);
 
             if constexpr(ComplexScalar<T_Value>)
