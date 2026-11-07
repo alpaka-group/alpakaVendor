@@ -48,6 +48,20 @@ function(alpakaV_add_test_target target_prefix folder)
                     ALPAKA_DISABLE_OneApi_AmdGpu
             )
         endif()
+        # ThreadSanitizer needs low ASLR entropy. A CI job container cannot change the host
+        # `/proc/sys/vm/mmap_rnd_bits`, so disable ASLR per process for the discovery run and every
+        # ctest invocation via Catch2's test executor. `setarch -R` only affects this process tree.
+        if(alpaka_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            find_program(ALPAKAV_SETARCH_EXECUTABLE setarch)
+            if(ALPAKAV_SETARCH_EXECUTABLE)
+                set_target_properties(
+                    ${test_target_name}
+                    PROPERTIES CROSSCOMPILING_EMULATOR "${ALPAKAV_SETARCH_EXECUTABLE};${CMAKE_SYSTEM_PROCESSOR};-R"
+                )
+            else()
+                message(WARNING "TSAN is enabled but setarch was not found; tests may fail with high ASLR entropy")
+            endif()
+        endif()
         alpaka_finalize(${test_target_name})
         catch_discover_tests(${test_target_name})
     endforeach()
