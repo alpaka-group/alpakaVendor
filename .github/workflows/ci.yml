@@ -108,6 +108,7 @@ jobs:
           - { compiler: clang, version: "21", cuda: "no", hip: "no", container: "ubuntu:24.04", sanitizer: "asan",
               env: { APCI_DEVICE_COMPILER: clang@21, APCI_CMAKE: 3.28.3, APCI_RUN_CTEST: ON } }
           - { compiler: clang, version: "21", cuda: "no", hip: "no", container: "ubuntu:24.04", sanitizer: "tsan",
+              container_options: "--security-opt seccomp=unconfined",
               env: { APCI_DEVICE_COMPILER: clang@21, APCI_CMAKE: 3.28.3, APCI_RUN_CTEST: ON } }
           - { compiler: clang, version: "21", cuda: "no", hip: "no", container: "ubuntu:24.04", sanitizer: "lsan",
               env: { APCI_DEVICE_COMPILER: clang@21, APCI_CMAKE: 3.28.3, APCI_RUN_CTEST: ON } }
@@ -116,6 +117,7 @@ jobs:
           - { compiler: gcc, version: "15", cuda: "no", hip: "no", container: "gcc:15.1.0", sanitizer: "asan",
               env: { APCI_DEVICE_COMPILER: gcc@15, APCI_CMAKE: 3.25.1, APCI_RUN_CTEST: ON } }
           - { compiler: gcc, version: "15", cuda: "no", hip: "no", container: "gcc:15.1.0", sanitizer: "tsan",
+              container_options: "--security-opt seccomp=unconfined",
               env: { APCI_DEVICE_COMPILER: gcc@15, APCI_CMAKE: 3.25.1, APCI_RUN_CTEST: ON } }
           - { compiler: gcc, version: "15", cuda: "no", hip: "no", container: "gcc:15.1.0", sanitizer: "lsan",
               env: { APCI_DEVICE_COMPILER: gcc@15, APCI_CMAKE: 3.25.1, APCI_RUN_CTEST: ON } }
@@ -136,6 +138,9 @@ jobs:
 
     container:
       image: ${{ matrix.config.container }}
+      # Sanitizer jobs need to disable ASLR per process; the default Docker seccomp profile blocks
+      # `personality(ADDR_NO_RANDOMIZE)`, which both ThreadSanitizer and `setarch -R` require.
+      options: ${{ matrix.config.container_options || '' }}
 
     env: ${{ matrix.config.env }}
 
